@@ -68,11 +68,12 @@ def get_H(key, phi):
 chosen_budget = 1.0
 
 phi_hat_plus, data, _ = alcoi(subkey, 16, 10, pi0, phi_star, chosen_budget, dx, du, dyn, get_H, noiseless_dyn, Aopt = False, debug=False)
+print('phi hat plus from alcoi: ', phi_hat_plus)
+
 
 def eval_excess_cost(eval_subkey, phi_hat, phi_star):
   return eval_cost(eval_subkey, phi_hat, phi_star) - eval_cost(eval_subkey, phi_star, phi_star)
 vec_eval_excess_cost = jit(jax.vmap(eval_excess_cost, in_axes=(0, None, None)))
-
 
 all_ecs = {'random_exploration': [], 'aopt': [], 'alcoi': []}
 
@@ -84,9 +85,9 @@ def estimate_phi(method, key, pi0, phi_star, N, T, budget=chosen_budget):
     data = collect_trajectories(key, phi_star,jnp.zeros((N, dx)), du, dyn, pi0, split=50, T=T, budget=budget)
     phi_hat = est_phi(subkey, data, noiseless_dyn, phi_star)
   elif method == 'aopt':
-    phi_hat, _ = alcoi(key, N, T, pi0, phi_star, budget, dx, du, dyn, get_H, noiseless_dyn, Aopt=True, debug=False)
+    phi_hat, _, _ = alcoi(key, N, T, pi0, phi_star, budget, dx, du, dyn, get_H, noiseless_dyn, Aopt=True, debug=False)
   elif method == 'alcoi':
-    phi_hat, _ = alcoi(key, N, T, pi0, phi_star, budget, dx, du, dyn, get_H, noiseless_dyn, Aopt=False, debug=False)
+    phi_hat, _, _ = alcoi(key, N, T, pi0, phi_star, budget, dx, du, dyn, get_H, noiseless_dyn, Aopt=False, debug=False)
   else:
     raise ValueError('method not recognized')
   return phi_hat
@@ -96,12 +97,13 @@ def eval_method(method, fit_key, eval_subkeys, pi0, phi_star, N, T, budget):
     return jnp.mean(vec_eval_excess_cost(eval_subkeys, phi_hat, phi_star)), phi_hat
 vectorized_eval_method = jax.vmap(eval_method, in_axes=(None, 0, None, None, None, None, None, None), out_axes=(0,0))
 key, subkey = jax.random.split(key)
-fit_subkeys = jax.random.split(subkey, 100)
+fit_subkeys = jax.random.split(subkey, 5)
 
 T = 10
 
 for method in all_ecs.keys():
   for N in [16, 54, 128, 250]:
+    print('Running experiment with Number of Episodes = ', N)
     ecs, phi_hats = vectorized_eval_method(method, fit_subkeys, eval_subkeys, pi0, phi_star, N, T,chosen_budget)
     all_ecs[method].append(jnp.nan_to_num(ecs, nan=1000))
 
