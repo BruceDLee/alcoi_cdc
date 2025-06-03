@@ -12,7 +12,19 @@ from tqdm import tqdm
 
 from utilsv2 import collect_trajectories, est_phi, alcoi
 
-gauss = lambda x, c: jnp.exp(-jnp.sum((x-c)**2))*(x-c)/jnp.sqrt(jnp.sum((x-c)**2))
+def gauss(x, c):
+    """Gaussian potential used in the illustrative example.
+
+    The original implementation divided by ``jnp.sqrt(jnp.sum((x-c)**2))`` which
+    becomes ``0`` when ``x == c`` leading to ``NaN`` values.  To avoid this we
+    add a small epsilon to the norm so the expression evaluates to ``0`` in this
+    degenerate case.
+    """
+    diff = x - c
+    norm_sq = jnp.sum(diff ** 2)
+    # Add a tiny value to avoid division by zero when diff is zero
+    norm = jnp.sqrt(norm_sq) + 1e-8
+    return jnp.exp(-norm_sq) * diff / norm
 
 dx = 2
 du = 2
