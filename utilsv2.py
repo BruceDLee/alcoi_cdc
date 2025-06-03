@@ -65,9 +65,14 @@ est_phi = jit(partial(est_phi, n_inits=5), static_argnames=['noiseless_dyn'])
 @partial(jit, static_argnames=['noiseless_dyn'])
 def exp_cost(rollout, Hhat, Lamb, phi_hat, noiseless_dyn):
   Df = jacfwd(noiseless_dyn, 2)
-  for x,u in zip(rollout[0], rollout[1]):
-    Lamb += Df(x,u, phi_hat).T@Df(x,u, phi_hat)
-  return jnp.trace(Hhat@jnp.linalg.inv(Lamb))
+  xs, us = rollout
+
+  def accum(x, u):
+    df = Df(x, u, phi_hat)
+    return df.T @ df
+
+  Lamb = Lamb + jnp.sum(jax.vmap(accum)(xs, us), axis=0)
+  return jnp.trace(Hhat @ jnp.linalg.inv(Lamb))
 
 @partial(jit, static_argnames=['noiseless_dyn'])
 def evaluate_input_candidates(outer_carry, u, noiseless_dyn):
@@ -90,10 +95,15 @@ def evaluate_input_candidates(outer_carry, u, noiseless_dyn):
 def empirical_covariance(data, phi_hat, noiseless_dyn):
   xs, us = data
   Df = jacfwd(noiseless_dyn, 2)
-  emp = jnp.zeros((len(phi_hat), len(phi_hat)))
-  for x, u in zip(xs,us):
-    for i in range(len(u)):
-      emp += Df(x[i], u[i], phi_hat).T@Df(x[i], u[i], phi_hat)
+
+  def per_t(x_t, u_t):
+    df = Df(x_t, u_t, phi_hat)
+    return df.T @ df
+
+  def per_rollout(x, u):
+    return jnp.sum(jax.vmap(per_t)(x[:-1], u), axis=0)
+
+  emp = jnp.sum(jax.vmap(per_rollout)(xs, us), axis=0)
   return emp
 
 def model_predictive_exploration(key, x, us_past, t, Hhat, Lamb, exp_cost, phi, budget,  noiseless_dyn, N_sample, T):
@@ -117,10 +127,18 @@ def model_predictive_exploration(key, x, us_past, t, Hhat, Lamb, exp_cost, phi, 
 
   return best_u
 
-policy = jit(model_predictive_exploration, static_argnames=['exp_cost', 't', 'noiseless_dyn', 'T', 'N_sample'])
+# `t` should be a dynamic argument so the policy does not recompile every time
+# it is called from the exploration loop. Removing `t` from `static_argnames`
+# allows a single compiled version of `policy` to be reused.
+policy = jit(
+    model_predictive_exploration,
+    static_argnames=['exp_cost', 'noiseless_dyn', 'T', 'N_sample'],
+)
 
-@partial(jit, static_argnames=['t', 'dyn', 'policy', 'noiseless_dyn', 'T', 'N_sample'])
-def step(carry, input, policy, t, dyn, phi_star, noiseless_dyn, T, N_sample): 
+# `t` is passed as a dynamic argument to avoid recompiling `step` on every
+# iteration of the exploration loop.
+@partial(jit, static_argnames=['dyn', 'policy', 'noiseless_dyn', 'T', 'N_sample'])
+def step(carry, input, policy, t, dyn, phi_star, noiseless_dyn, T, N_sample):
   key, x, us, Hhat, Lamb, phi_hat, budget  = carry
   key, subkey = jax.random.split(key)
   us_mpc = policy(subkey, x, us, t, Hhat, Lamb, exp_cost, phi_hat, budget, noiseless_dyn, N_sample, T)
